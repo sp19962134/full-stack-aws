@@ -1,139 +1,288 @@
 import { Request, Response } from 'express';
-
-export interface Task {
-  id: string;
-  title: string;
-  description: string;
-  status: 'pending' | 'in-progress' | 'completed';
-  priority: 'low' | 'medium' | 'high';
-  createdAt: string;
-  updatedAt: string;
-  assignedTo?: string;
-}
-
-// Mock data for Day 2 (will be replaced with database in Day 6)
-let tasks: Task[] = [
-  {
-    id: '1',
-    title: 'Complete project setup',
-    description: 'Set up the development environment and install dependencies',
-    status: 'completed',
-    priority: 'high',
-    createdAt: '2024-01-15T10:00:00Z',
-    updatedAt: '2024-01-15T12:00:00Z',
-  },
-  {
-    id: '2',
-    title: 'Design user interface',
-    description: 'Create wireframes and mockups for the task management app',
-    status: 'in-progress',
-    priority: 'medium',
-    createdAt: '2024-01-15T14:00:00Z',
-    updatedAt: '2024-01-15T16:00:00Z',
-  },
-  {
-    id: '3',
-    title: 'Implement authentication',
-    description: 'Add user login and registration functionality',
-    status: 'pending',
-    priority: 'high',
-    createdAt: '2024-01-16T09:00:00Z',
-    updatedAt: '2024-01-16T09:00:00Z',
-  },
-];
+import { TaskModel, Task, TaskFilters } from '../models/Task';
 
 export class TaskController {
-  // GET /api/tasks
-  getAllTasks = (req: Request, res: Response) => {
-    try {
-      res.json(tasks);
-    } catch (error) {
-      res.status(500).json({ error: 'Failed to fetch tasks' });
-    }
-  };
+  private taskModel: TaskModel;
 
-  // GET /api/tasks/:id
-  getTaskById = (req: Request, res: Response) => {
+  constructor() {
+    this.taskModel = new TaskModel();
+  }
+
+  async getAllTasks(req: Request, res: Response): Promise<Response> {
+    try {
+      const userId = req.user?.id || 'default-user'; // Get from auth middleware
+      const filters: TaskFilters = {
+        status: req.query.status as string,
+        priority: req.query.priority as string,
+        assignedTo: req.query.assignedTo as string,
+        search: req.query.search as string,
+        dueDate: req.query.dueDate as string
+      };
+
+      const tasks = await this.taskModel.getAllTasks(userId, filters);
+      return res.json(tasks);
+    } catch (error: any) {
+      console.error('Error getting tasks:', error);
+      return res.status(500).json({ 
+        message: 'Failed to get tasks',
+        error: error.message 
+      });
+    }
+  }
+
+  async getTaskById(req: Request, res: Response): Promise<Response> {
     try {
       const { id } = req.params;
-      const task = tasks.find(t => t.id === id);
+      const userId = req.user?.id || 'default-user';
+
+      if (!id) {
+        return res.status(400).json({ message: 'Task ID is required' });
+      }
+
+      const task = await this.taskModel.getTaskById(id, userId);
       
       if (!task) {
-        return res.status(404).json({ error: 'Task not found' });
+        return res.status(404).json({ message: 'Task not found' });
       }
-      
+
       return res.json(task);
-    } catch (error) {
-      return res.status(500).json({ error: 'Failed to fetch task' });
+    } catch (error: any) {
+      console.error('Error getting task:', error);
+      return res.status(500).json({ 
+        message: 'Failed to get task',
+        error: error.message 
+      });
     }
-  };
+  }
 
-  // POST /api/tasks
-  createTask = (req: Request, res: Response) => {
+  async createTask(req: Request, res: Response): Promise<Response> {
     try {
-      const { title, description, status, priority, assignedTo } = req.body;
-      
-      if (!title) {
-        return res.status(400).json({ error: 'Title is required' });
+      const userId = req.user?.id || 'default-user';
+      const { title, description, status, priority, assignedTo, dueDate, tags } = req.body;
+
+      // Validation
+      if (!title || !description || !status || !priority) {
+        return res.status(400).json({ 
+          message: 'Title, description, status, and priority are required' 
+        });
       }
 
-      const newTask: Task = {
-        id: Date.now().toString(),
+      if (!['pending', 'in-progress', 'completed'].includes(status)) {
+        return res.status(400).json({ 
+          message: 'Status must be pending, in-progress, or completed' 
+        });
+      }
+
+      if (!['low', 'medium', 'high'].includes(priority)) {
+        return res.status(400).json({ 
+          message: 'Priority must be low, medium, or high' 
+        });
+      }
+
+      const taskData: Omit<Task, 'id' | 'createdAt' | 'updatedAt'> = {
         title,
-        description: description || '',
-        status: status || 'pending',
-        priority: priority || 'medium',
+        description,
+        status,
+        priority,
+        userId,
         assignedTo,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        dueDate,
+        tags,
+        attachments: [],
+        comments: []
       };
 
-      tasks.push(newTask);
+      const newTask = await this.taskModel.createTask(taskData);
       return res.status(201).json(newTask);
-    } catch (error) {
-      return res.status(500).json({ error: 'Failed to create task' });
+    } catch (error: any) {
+      console.error('Error creating task:', error);
+      return res.status(500).json({ 
+        message: 'Failed to create task',
+        error: error.message 
+      });
     }
-  };
+  }
 
-  // PUT /api/tasks/:id
-  updateTask = (req: Request, res: Response) => {
+  async updateTask(req: Request, res: Response): Promise<Response> {
     try {
       const { id } = req.params;
-      const updateData = req.body;
-      
-      const taskIndex = tasks.findIndex(t => t.id === id);
-      
-      if (taskIndex === -1) {
-        return res.status(404).json({ error: 'Task not found' });
+      const userId = req.user?.id || 'default-user';
+      const updates = req.body;
+
+      if (!id) {
+        return res.status(400).json({ message: 'Task ID is required' });
       }
 
-      const updatedTask: Task = {
-        ...tasks[taskIndex],
-        ...updateData,
-        updatedAt: new Date().toISOString(),
-      };
+      // Remove fields that shouldn't be updated
+      delete updates.id;
+      delete updates.userId;
+      delete updates.createdAt;
 
-      tasks[taskIndex] = updatedTask;
+      // Validate status and priority if provided
+      if (updates.status && !['pending', 'in-progress', 'completed'].includes(updates.status)) {
+        return res.status(400).json({ 
+          message: 'Status must be pending, in-progress, or completed' 
+        });
+      }
+
+      if (updates.priority && !['low', 'medium', 'high'].includes(updates.priority)) {
+        return res.status(400).json({ 
+          message: 'Priority must be low, medium, or high' 
+        });
+      }
+
+      const updatedTask = await this.taskModel.updateTask(id, userId, updates);
       return res.json(updatedTask);
-    } catch (error) {
-      return res.status(500).json({ error: 'Failed to update task' });
+    } catch (error: any) {
+      console.error('Error updating task:', error);
+      if (error.message.includes('not found')) {
+        return res.status(404).json({ message: error.message });
+      }
+      return res.status(500).json({ 
+        message: 'Failed to update task',
+        error: error.message 
+      });
     }
-  };
+  }
 
-  // DELETE /api/tasks/:id
-  deleteTask = (req: Request, res: Response) => {
+  async deleteTask(req: Request, res: Response): Promise<Response> {
     try {
       const { id } = req.params;
-      const taskIndex = tasks.findIndex(t => t.id === id);
-      
-      if (taskIndex === -1) {
-        return res.status(404).json({ error: 'Task not found' });
+      const userId = req.user?.id || 'default-user';
+
+      if (!id) {
+        return res.status(400).json({ message: 'Task ID is required' });
       }
 
-      tasks = tasks.filter(t => t.id !== id);
-      return res.status(204).send();
-    } catch (error) {
-      return res.status(500).json({ error: 'Failed to delete task' });
+      await this.taskModel.deleteTask(id, userId);
+      return res.status(200).json({ message: 'Task deleted successfully' });
+    } catch (error: any) {
+      console.error('Error deleting task:', error);
+      if (error.message.includes('not found')) {
+        return res.status(404).json({ message: error.message });
+      }
+      return res.status(500).json({ 
+        message: 'Failed to delete task',
+        error: error.message 
+      });
     }
-  };
+  }
+
+  async addComment(req: Request, res: Response): Promise<Response> {
+    try {
+      const { id } = req.params;
+      const userId = req.user?.id || 'default-user';
+      const { text, userName } = req.body;
+
+      if (!id) {
+        return res.status(400).json({ message: 'Task ID is required' });
+      }
+
+      if (!text || !userName) {
+        return res.status(400).json({ message: 'Text and userName are required' });
+      }
+
+      const comment = { text, userId, userName };
+      const updatedTask = await this.taskModel.addComment(id, userId, comment);
+      return res.json(updatedTask);
+    } catch (error: any) {
+      console.error('Error adding comment:', error);
+      return res.status(500).json({ 
+        message: 'Failed to add comment',
+        error: error.message 
+      });
+    }
+  }
+
+  async getTasksByStatus(req: Request, res: Response): Promise<Response> {
+    try {
+      const { status } = req.params;
+      const userId = req.user?.id || 'default-user';
+
+      if (!['pending', 'in-progress', 'completed'].includes(status)) {
+        return res.status(400).json({ 
+          message: 'Status must be pending, in-progress, or completed' 
+        });
+      }
+
+      const tasks = await this.taskModel.getTasksByStatus(userId, status);
+      return res.json(tasks);
+    } catch (error: any) {
+      console.error('Error getting tasks by status:', error);
+      return res.status(500).json({ 
+        message: 'Failed to get tasks by status',
+        error: error.message 
+      });
+    }
+  }
+
+  async getTasksByPriority(req: Request, res: Response): Promise<Response> {
+    try {
+      const { priority } = req.params;
+      const userId = req.user?.id || 'default-user';
+
+      if (!['low', 'medium', 'high'].includes(priority)) {
+        return res.status(400).json({ 
+          message: 'Priority must be low, medium, or high' 
+        });
+      }
+
+      const tasks = await this.taskModel.getTasksByPriority(userId, priority);
+      return res.json(tasks);
+    } catch (error: any) {
+      console.error('Error getting tasks by priority:', error);
+      return res.status(500).json({ 
+        message: 'Failed to get tasks by priority',
+        error: error.message 
+      });
+    }
+  }
+
+  async searchTasks(req: Request, res: Response): Promise<Response> {
+    try {
+      const { q } = req.query;
+      const userId = req.user?.id || 'default-user';
+
+      if (!q || typeof q !== 'string') {
+        return res.status(400).json({ message: 'Search query is required' });
+      }
+
+      const tasks = await this.taskModel.searchTasks(userId, q);
+      return res.json(tasks);
+    } catch (error: any) {
+      console.error('Error searching tasks:', error);
+      return res.status(500).json({ 
+        message: 'Failed to search tasks',
+        error: error.message 
+      });
+    }
+  }
+
+  async getOverdueTasks(req: Request, res: Response): Promise<Response> {
+    try {
+      const userId = req.user?.id || 'default-user';
+      const tasks = await this.taskModel.getOverdueTasks(userId);
+      return res.json(tasks);
+    } catch (error: any) {
+      console.error('Error getting overdue tasks:', error);
+      return res.status(500).json({ 
+        message: 'Failed to get overdue tasks',
+        error: error.message 
+      });
+    }
+  }
+
+  async getTaskStatistics(req: Request, res: Response): Promise<Response> {
+    try {
+      const userId = req.user?.id || 'default-user';
+      const statistics = await this.taskModel.getTaskStatistics(userId);
+      return res.json(statistics);
+    } catch (error: any) {
+      console.error('Error getting task statistics:', error);
+      return res.status(500).json({ 
+        message: 'Failed to get task statistics',
+        error: error.message 
+      });
+    }
+  }
 } 

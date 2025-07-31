@@ -1,22 +1,26 @@
-import express from 'express';
+import { Router } from 'express';
 import { TaskController } from '../controllers/TaskController';
 
-const router = express.Router();
+const router = Router();
 const taskController = new TaskController();
 
-// GET /api/tasks - Get all tasks
-router.get('/', taskController.getAllTasks);
+// Basic CRUD operations
+router.get('/tasks', taskController.getAllTasks.bind(taskController));
+router.get('/tasks/:id', taskController.getTaskById.bind(taskController));
+router.post('/tasks', taskController.createTask.bind(taskController));
+router.put('/tasks/:id', taskController.updateTask.bind(taskController));
+router.delete('/tasks/:id', taskController.deleteTask.bind(taskController));
 
-// GET /api/tasks/:id - Get a specific task
-router.get('/:id', taskController.getTaskById);
+// Advanced features
+router.post('/tasks/:id/comments', taskController.addComment.bind(taskController));
 
-// POST /api/tasks - Create a new task
-router.post('/', taskController.createTask);
+// Filtering and search
+router.get('/tasks/status/:status', taskController.getTasksByStatus.bind(taskController));
+router.get('/tasks/priority/:priority', taskController.getTasksByPriority.bind(taskController));
+router.get('/tasks/search', taskController.searchTasks.bind(taskController));
+router.get('/tasks/overdue', taskController.getOverdueTasks.bind(taskController));
 
-// PUT /api/tasks/:id - Update a task
-router.put('/:id', taskController.updateTask);
-
-// DELETE /api/tasks/:id - Delete a task
-router.delete('/:id', taskController.deleteTask);
+// Analytics and statistics
+router.get('/tasks/statistics', taskController.getTaskStatistics.bind(taskController));
 
 export default router; 

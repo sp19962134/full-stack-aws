@@ -10,6 +10,19 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   assignedTo?: string;
+  dueDate?: string;
+  tags?: string[];
+  attachments?: string[];
+  comments?: Comment[];
+  userId?: string;
+}
+
+export interface Comment {
+  id: string;
+  text: string;
+  userId: string;
+  userName: string;
+  createdAt: string;
 }
 
 interface TasksState {
